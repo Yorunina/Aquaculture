@@ -58,6 +58,7 @@ import java.util.Random;
 
 public class AquaFishingBobberEntity extends FishingHook implements IEntityAdditionalSpawnData {
     private final Random lavaTickRand = new Random();
+    private final Random commonTickRand = new Random();
     private final Hook hook;
     private final ItemStack fishingLine;
     private final ItemStack bobber;
@@ -277,7 +278,104 @@ public class AquaFishingBobberEntity extends FishingHook implements IEntityAddit
                 this.lavaFishingTick();
             }
         } else {
-            super.tick();
+            this.commonTick();
+        }
+    }
+
+    private void commonTick() {
+        super.baseTick();
+        this.commonTickRand.setSeed(this.getUUID().getLeastSignificantBits() ^ this.level().getGameTime());
+        Player angler = this.getPlayerOwner();
+        if (angler == null) {
+            this.discard();
+        } else if (this.level().isClientSide || !this.shouldStopFishing(angler)) {
+            if (this.onGround()) {
+                ++this.life;
+                if (this.life >= 1200) {
+                    this.discard();
+                    return;
+                }
+            } else {
+                this.life = 0;
+            }
+
+            float f = 0.0F;
+            BlockPos bobberPos = this.blockPosition();
+            FluidState fluidState = this.level().getFluidState(bobberPos);
+            boolean matchFluid = fluidState.getTags().anyMatch(tag -> this.hook.getFluids().contains(tag));
+
+            if (matchFluid) {
+                f = fluidState.getHeight(this.level(), bobberPos);
+            }
+
+            boolean isMainHandRod = f > 0.0F;
+            if (this.currentState == FishHookState.FLYING) {
+                if (this.hookedIn != null) {
+                    this.setDeltaMovement(Vec3.ZERO);
+                    this.currentState = FishHookState.HOOKED_IN_ENTITY;
+                    return;
+                }
+
+                if (isMainHandRod) {
+                    this.setDeltaMovement(this.getDeltaMovement().multiply(0.3D, 0.2D, 0.3D));
+                    this.currentState = FishHookState.BOBBING;
+                    return;
+                }
+
+                this.checkCollision();
+            } else {
+                if (this.currentState == FishHookState.HOOKED_IN_ENTITY) {
+                    if (this.hookedIn != null) {
+                        if (!this.hookedIn.isRemoved() && this.hookedIn.level().dimension() == this.level().dimension()) {
+                            this.setPos(this.hookedIn.getX(), this.hookedIn.getY(0.8D), this.hookedIn.getZ());
+                        } else {
+                            this.setHookedEntity(null);
+                            this.currentState = FishingHook.FishHookState.FLYING;
+                        }
+                    }
+                    return;
+                }
+
+                if (this.currentState == FishHookState.BOBBING) {
+                    Vec3 motion = this.getDeltaMovement();
+                    double y = this.getY() + motion.y - (double) bobberPos.getY() - (double) f;
+                    if (Math.abs(y) < 0.01D) {
+                        y += Math.signum(y) * 0.1D;
+                    }
+
+                    this.setDeltaMovement(motion.x * 0.9D, motion.y - y * (double) this.random.nextFloat() * 0.2D, motion.z * 0.9D);
+                    if (this.nibble <= 0 && this.timeUntilHooked <= 0) {
+                        this.openWater = true;
+                    } else {
+                        this.openWater = this.openWater && this.outOfWaterTime < 10 && this.calculateOpenWater(bobberPos);
+                    }
+
+                    if (isMainHandRod) {
+                        this.outOfWaterTime = Math.max(0, this.outOfWaterTime - 1);
+                        if (this.biting) {
+                            this.setDeltaMovement(this.getDeltaMovement().add(0.0D, -0.1D * (double) this.commonTickRand.nextFloat() * (double) this.commonTickRand.nextFloat(), 0.0D));
+                        }
+
+                        if (!this.level().isClientSide) {
+                            this.catchingFish(bobberPos);
+                        }
+                    } else {
+                        this.outOfWaterTime = Math.min(10, this.outOfWaterTime + 1);
+                    }
+                }
+            }
+            if (!matchFluid) {
+                this.setDeltaMovement(this.getDeltaMovement().add(0.0D, -0.03D, 0.0D));
+            }
+
+            this.move(MoverType.SELF, this.getDeltaMovement());
+            this.updateRotation();
+            if (this.currentState == FishingHook.FishHookState.FLYING && (this.onGround() || this.horizontalCollision)) {
+                this.setDeltaMovement(Vec3.ZERO);
+            }
+
+            this.setDeltaMovement(this.getDeltaMovement().scale(0.92D));
+            this.reapplyPosition();
         }
     }
 
@@ -409,19 +507,25 @@ public class AquaFishingBobberEntity extends FishingHook implements IEntityAddit
                 FluidState fluidState = serverLevel.getFluidState(new BlockPos((int) x, (int) (y - 1.0D), (int) z)); //Replaced BlockState checks with fluidState checks
                 float zOffset = sin * 0.04F; //Moved to be possible to use with both Lava & Water particles
                 float xOffset = cos * 0.04F; //Moved to be possible to use with both Lava & Water particles
-                if (fluidState.is(FluidTags.WATER)) { //Water check added
+                boolean matchFluid = fluidState.getTags().anyMatch(tag -> this.hook.getFluids().contains(tag));
+                if (matchFluid && fluidState.is(FluidTags.WATER)) { //Water check added
                     if (this.random.nextFloat() < 0.15F) {
                         serverLevel.sendParticles(ParticleTypes.BUBBLE, x, y - 0.10000000149011612D, z, 1, sin, 0.1D, cos, 0.0D);
                     }
                     serverLevel.sendParticles(ParticleTypes.FISHING, x, y, z, 0, xOffset, 0.01D, -zOffset, 1.0D);
                     serverLevel.sendParticles(ParticleTypes.FISHING, x, y, z, 0, -xOffset, 0.01D, zOffset, 1.0D);
-                }
-                if (fluidState.is(FluidTags.LAVA)) { //Lava added
+                } else if (matchFluid && fluidState.is(FluidTags.LAVA)) { //Lava added
                     if (this.random.nextFloat() < 0.15F) {
                         serverLevel.sendParticles(ParticleTypes.LAVA, x, y - 0.10000000149011612D, z, 1, sin, 0.1D, cos, 0.0D);
                     }
                     serverLevel.sendParticles(ParticleTypes.SMOKE, x, y, z, 0, xOffset, 0.01D, -zOffset, 1.0D);
                     serverLevel.sendParticles(ParticleTypes.SMOKE, x, y, z, 0, -xOffset, 0.01D, zOffset, 1.0D);
+                } else if (matchFluid) {
+                    if (this.random.nextFloat() < 0.15F) {
+                        serverLevel.sendParticles(ParticleTypes.BUBBLE, x, y - 0.10000000149011612D, z, 1, sin, 0.1D, cos, 0.0D);
+                    }
+                    serverLevel.sendParticles(ParticleTypes.FISHING, x, y, z, 0, xOffset, 0.01D, -zOffset, 1.0D);
+                    serverLevel.sendParticles(ParticleTypes.FISHING, x, y, z, 0, -xOffset, 0.01D, zOffset, 1.0D);
                 }
                 if (this.hasHook() && this.hook.getCatchSound() != null && this.getPlayerOwner() != null) { //Hook catch sound functionality
                     this.level().playSound(null, this.getPlayerOwner() != null ? this.getPlayerOwner().blockPosition() : this.blockPosition(), this.hook.getCatchSound(), this.getSoundSource(), 0.1F, 0.1F);
@@ -430,16 +534,19 @@ public class AquaFishingBobberEntity extends FishingHook implements IEntityAddit
                 Vec3 motion = this.getDeltaMovement();
                 this.setDeltaMovement(motion.x, (-0.4F * Mth.nextFloat(this.random, 0.6F, 1.0F)), motion.z);
                 double boundingBox = this.getBoundingBox().minY + 0.5D;
-                if (serverLevel.getFluidState(this.blockPosition()).is(FluidTags.WATER)) { //Water check added
+                FluidState fluidState = serverLevel.getFluidState(this.blockPosition());
+                boolean matchFluid = fluidState.getTags().anyMatch(tag -> this.hook.getFluids().contains(tag));
+                if (matchFluid && fluidState.is(FluidTags.WATER)) { //Water check added
                     this.playSound(SoundEvents.FISHING_BOBBER_SPLASH, 0.25F, 1.0F + (this.random.nextFloat() - this.random.nextFloat()) * 0.4F);
                     serverLevel.sendParticles(ParticleTypes.BUBBLE, this.getX(), boundingBox, this.getZ(), (int) (1.0F + this.getBbWidth() * 20.0F), this.getBbWidth(), 0.0D, this.getBbWidth(), 0.2D);
                     serverLevel.sendParticles(ParticleTypes.FISHING, this.getX(), boundingBox, this.getZ(), (int) (1.0F + this.getBbWidth() * 20.0F), this.getBbWidth(), 0.0D, this.getBbWidth(), 0.2);
-                }
-
-                //Lava sound added
-                if (serverLevel.getFluidState(this.blockPosition()).is(FluidTags.LAVA)) {
+                } else if (matchFluid && fluidState.is(FluidTags.LAVA)) {
                     this.playSound(AquaSounds.BOBBER_LAND_IN_LAVA.get(), 1.00F, 1.0F + (this.random.nextFloat() - this.random.nextFloat()) * 0.4F);
                     serverLevel.sendParticles(ParticleTypes.LAVA, this.getX(), boundingBox, this.getZ(), (int) (1.0F + this.getBbWidth() * 20.0F), this.getBbWidth(), 0.0D, this.getBbWidth(), 0.2D);
+                } else if (matchFluid) {
+                    this.playSound(SoundEvents.FISHING_BOBBER_SPLASH, 0.25F, 1.0F + (this.random.nextFloat() - this.random.nextFloat()) * 0.4F);
+                    serverLevel.sendParticles(ParticleTypes.BUBBLE, this.getX(), boundingBox, this.getZ(), (int) (1.0F + this.getBbWidth() * 20.0F), this.getBbWidth(), 0.0D, this.getBbWidth(), 0.2D);
+                    serverLevel.sendParticles(ParticleTypes.FISHING, this.getX(), boundingBox, this.getZ(), (int) (1.0F + this.getBbWidth() * 20.0F), this.getBbWidth(), 0.0D, this.getBbWidth(), 0.2);
                 }
                 if (this.hasHook() && this.hook.getMaxCatchable() > 0) { //Added check
                     this.nibble = Mth.nextInt(this.random, this.hook.getMinCatchable(), this.hook.getMaxCatchable());
@@ -466,7 +573,8 @@ public class AquaFishingBobberEntity extends FishingHook implements IEntityAddit
                 double y = ((float) Mth.floor(this.getY()) + 1.0F);
                 double z = this.getZ() + (double) (Mth.cos(sin) * cos * 0.1F);
                 FluidState fluidState = serverLevel.getFluidState(new BlockPos((int) x, (int) (y - 1.0D), (int) z)); //Replaced BlockState check, with a FluidState check
-                if (fluidState.is(FluidTags.WATER)) { //Check tag, instead of only water block
+                boolean matchFluid = fluidState.getTags().anyMatch(tag -> this.hook.getFluids().contains(tag));
+                if (matchFluid && fluidState.is(FluidTags.WATER)) { //Check tag, instead of only water block
                     serverLevel.sendParticles(ParticleTypes.SPLASH, x, y, z, 2 + this.random.nextInt(2), 0.10000000149011612D, 0.0D, 0.10000000149011612D, 0.0D);
                 }
             }
@@ -490,7 +598,7 @@ public class AquaFishingBobberEntity extends FishingHook implements IEntityAddit
 
     @Override
     public boolean displayFireAnimation() {
-        return (this.hasHook() && !this.hook.getFluids().contains(FluidTags.LAVA)) && super.displayFireAnimation();
+        return false;
     }
 
     @Override

@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import com.teammetallurgy.aquaculture.Aquaculture;
 import com.teammetallurgy.aquaculture.entity.AquaFishingBobberEntity;
+import com.teammetallurgy.aquaculture.item.DyeableItem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -17,12 +18,14 @@ import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.DyeableLeatherItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.WeatheringCopper;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.ToolActions;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 
 import javax.annotation.Nonnull;
+import java.util.Objects;
 
 public class AquaBobberRenderer extends EntityRenderer<AquaFishingBobberEntity> {
     private static final ResourceLocation BOBBER = new ResourceLocation(Aquaculture.MOD_ID, "textures/entity/rod/bobber/bobber.png");
@@ -50,10 +53,21 @@ public class AquaBobberRenderer extends EntityRenderer<AquaFishingBobberEntity> 
             PoseStack.Pose bobberMatrix = poseStack.last();
             Matrix4f posMatrix = bobberMatrix.pose();
             Matrix3f matrix3f = bobberMatrix.normal();
-            //Bobber + Bobber Overlay
-            VertexConsumer bobberOverlayVertex = bobber.hasBobber() ? buffer.getBuffer(BOBBER_OVERLAY_RENDER) : buffer.getBuffer(BOBBER_VANILLA_RENDER);
             //Bobber Overlay
             ItemStack bobberStack = bobber.getBobber();
+            //Bobber + Bobber Overlay
+            VertexConsumer hookVertex = bobber.hasHook() ? buffer.getBuffer(RenderType.entityCutout(bobber.getHook().getTexture())) : buffer.getBuffer(HOOK_RENDER);
+            VertexConsumer bobberOverlayVertex = buffer.getBuffer(BOBBER_VANILLA_RENDER);
+            VertexConsumer bobberVertex = buffer.getBuffer(BOBBER_RENDER);
+            if (bobber.hasBobber()) {
+                if (bobberStack.getItem() instanceof DyeableItem bobberDyeableItem) {
+                    bobberOverlayVertex = Objects.isNull(bobberDyeableItem.getEntityTextureOverlay()) ? buffer.getBuffer(BOBBER_OVERLAY_RENDER) : buffer.getBuffer(RenderType.entityCutout(bobberDyeableItem.getEntityTextureOverlay()));
+                    if (!Objects.isNull(bobberDyeableItem.getEntityTexture())) {
+                        bobberVertex = buffer.getBuffer(RenderType.entityCutout(bobberDyeableItem.getEntityTexture()));
+                    }
+                }
+            }
+
             float bobberR = 1.0F;
             float bobberG = 1.0F;
             float bobberB = 1.0F;
@@ -71,14 +85,12 @@ public class AquaBobberRenderer extends EntityRenderer<AquaFishingBobberEntity> 
             vertex(bobberOverlayVertex, posMatrix, matrix3f, i, 0.0F, 1, 0, 0, bobberR, bobberG, bobberB);
             //Bobber Background
             if (bobber.hasBobber()) {
-                VertexConsumer bobberVertex = buffer.getBuffer(BOBBER_RENDER);
                 renderPosTexture(bobberVertex, posMatrix, matrix3f, i, 0.0F, 0, 0, 1);
                 renderPosTexture(bobberVertex, posMatrix, matrix3f, i, 1.0F, 0, 1, 1);
                 renderPosTexture(bobberVertex, posMatrix, matrix3f, i, 1.0F, 1, 1, 0);
                 renderPosTexture(bobberVertex, posMatrix, matrix3f, i, 0.0F, 1, 0, 0);
             }
             //Hook
-            VertexConsumer hookVertex = bobber.hasHook() ? buffer.getBuffer(RenderType.entityCutout(bobber.getHook().getTexture())) : buffer.getBuffer(HOOK_RENDER);
             renderPosTexture(hookVertex, posMatrix, matrix3f, i, 0.0F, 0, 0, 1);
             renderPosTexture(hookVertex, posMatrix, matrix3f, i, 1.0F, 0, 1, 1);
             renderPosTexture(hookVertex, posMatrix, matrix3f, i, 1.0F, 1, 1, 0);

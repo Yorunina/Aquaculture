@@ -50,11 +50,6 @@ public class TackleBoxContainer extends AbstractContainerMenu {
                     public boolean mayPlace(@Nonnull ItemStack stack) {
                         return stack.getItem() instanceof BaitItem && super.mayPlace(stack);
                     }
-
-                    @Override
-                    public boolean mayPickup(Player player) {
-                        return false;
-                    }
                 });
                 this.slotLine = this.addSlot(new SlotHidable(fishingRod, 2, 106, 67) {
                     @Override
